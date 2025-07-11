@@ -201,10 +201,6 @@ enum i2c_ready_status{
 	static int tp_debug_daily_build = 0;
 #endif
 
-bool touchkey_enabled = 1;
-EXPORT_SYMBOL(touchkey_enabled);
-
-bool touchkey_reverse_enabled = 0;
 
 #ifdef SUPPORT_TP_SLEEP_MODE
 static int sleep_enable;
@@ -1569,16 +1565,6 @@ static void int_touch(struct synaptics_ts_data *ts)
 
 }
 
-// Touchkey mapping
-static const struct {
-	unsigned int mask;
-	unsigned int keycode;
-} touchkey_buttons[] = {
-	{0x01, KEY_MENU},
-	{0x02, KEY_BACK},
-	{0x04, KEY_HOMEPAGE}
-};
-
 static void int_key_report(struct synaptics_ts_data *ts)
 {
     int ret= 0;
@@ -1597,36 +1583,41 @@ static void int_key_report(struct synaptics_ts_data *ts)
 			input_sync(ts->input_dev);
 		}
 	}else{
-		if (!touchkey_enabled)
-			return;
-
 		i2c_smbus_write_byte_data(ts->client, 0xff, 0x02);
 		ret = i2c_smbus_read_byte_data(ts->client, F1A_0D_DATA00);
         TPD_ERR("%s ret = %d pre_btn_state = %d\n", __func__, ret, ts->pre_btn_state);
-
-		for (int i = 0; i < sizeof(touchkey_buttons)/sizeof(touchkey_buttons[0]); i++) {
-			unsigned int mask = touchkey_buttons[i].mask;
-			unsigned int key = touchkey_buttons[i].keycode;
-
-			// TODO: do we expect this to change during press & release?
-			if (touchkey_reverse_enabled)
-				key = (key == KEY_MENU) ? KEY_BACK
-					: (key == KEY_BACK) ? KEY_MENU
-					: key /* default */;
-
-			// Rising edge detection (press)
-			if ((ret & mask) && !(ts->pre_btn_state & mask)) {
-				if (is_touch == 0) {
-					input_report_key(ts->input_dev, key, 1);
-					input_sync(ts->input_dev);
-				}
-			}
-
-			// Falling edge detection (release)
-			else if (!(ret & mask) && (ts->pre_btn_state & mask)) {
-				input_report_key(ts->input_dev, key, 0);
+		if((ret & 0x01) && !(ts->pre_btn_state & 0x01))//menu
+		{
+			if( 0 == is_touch ){
+				input_report_key(ts->input_dev, KEY_MENU, 1);
 				input_sync(ts->input_dev);
 			}
+		}else if(!(ret & 0x01) && (ts->pre_btn_state & 0x01)){
+			input_report_key(ts->input_dev, KEY_MENU, 0);
+			input_sync(ts->input_dev);
+		}
+
+		if((ret & 0x02) && !(ts->pre_btn_state & 0x02))//back
+		{
+			if( 0 == is_touch ){
+				input_report_key(ts->input_dev, KEY_BACK, 1);
+				input_sync(ts->input_dev);
+			}
+
+		}else if(!(ret & 0x02) && (ts->pre_btn_state & 0x02)){
+			input_report_key(ts->input_dev, KEY_BACK, 0);
+			input_sync(ts->input_dev);
+		}
+
+		if((ret & 0x04) && !(ts->pre_btn_state & 0x04))//home
+		{
+			if( 0 == is_touch ){
+				input_report_key(ts->input_dev, KEY_HOMEPAGE, 1);
+				input_sync(ts->input_dev);
+			}
+		}else if(!(ret & 0x04) && (ts->pre_btn_state & 0x04)){
+			input_report_key(ts->input_dev, KEY_HOMEPAGE, 0);
+			input_sync(ts->input_dev);
 		}
 	}
 	ts->pre_btn_state = ret & 0x07;
@@ -3436,106 +3427,6 @@ static const struct file_operations tp_reset_proc_fops = {
 	.owner = THIS_MODULE,
 };
 
-static ssize_t tp_touchkey_enable_write(struct file *file, const char __user *buffer, size_t count, loff_t *ppos)
-{
-	int value = 0;
-	char buf[4] = {0};
-	struct synaptics_ts_data *ts = ts_g;
-
-	if (count > 2)
-		return count;
-	if (!ts)
-		return count;
-
-	if (copy_from_user(buf, buffer, count)) {
-		TPD_INFO("%s: read proc input error.\n", __func__);
-		return count;
-	}
-	sscanf(buf, "%d", &value);
-	if (value > 1)
-		return count;
-
-	mutex_lock(&ts->mutex);
-	if (touchkey_enabled != value) {
-		touchkey_enabled = value;
-		TPD_INFO("%s: touchkey_enabled = %d\n", __func__, touchkey_enabled);
-	} else {
-		TPD_INFO("%s: do not do same operation: %d\n", __func__, value);
-	}
-	mutex_unlock(&ts->mutex);
-
-	return count;
-}
-
-static ssize_t tp_touchkey_enable_read(struct file *file, char __user *user_buf, size_t count, loff_t *ppos)
-{
-	int ret = 0;
-	char page[4] = {0};
-
-	TPD_DEBUG("touchkey enable is: %d\n", touchkey_enabled);
-	ret = snprintf(page, sizeof(page), "%d\n", touchkey_enabled);
-	ret = simple_read_from_buffer(user_buf, count, ppos, page, strlen(page));
-
-	return ret;
-}
-
-static ssize_t tp_touchkey_reverse_write(struct file *file, const char __user *buffer, size_t count, loff_t *ppos)
-{
-	int value = 0;
-	char buf[4] = {0};
-	struct synaptics_ts_data *ts = ts_g;
-
-	if (count > 2)
-		return count;
-	if (!ts)
-		return count;
-
-	if (copy_from_user(buf, buffer, count)) {
-		TPD_INFO("%s: read proc input error.\n", __func__);
-		return count;
-	}
-	sscanf(buf, "%d", &value);
-	if (value > 1)
-		return count;
-
-	mutex_lock(&ts->mutex);
-	if (touchkey_reverse_enabled != value) {
-		touchkey_reverse_enabled = value;
-		TPD_INFO("%s: touchkey_reverse_enabled = %d\n", __func__, touchkey_reverse_enabled);
-	} else {
-		TPD_INFO("%s: do not do same operation: %d\n", __func__, value);
-	}
-	mutex_unlock(&ts->mutex);
-
-	return count;
-}
-
-static ssize_t tp_touchkey_reverse_read(struct file *file, char __user *user_buf, size_t count, loff_t *ppos)
-{
-	int ret = 0;
-	char page[4] = {0};
-
-	TPD_DEBUG("touchkey reverse enable is: %d\n", touchkey_reverse_enabled);
-	ret = snprintf(page, sizeof(page), "%d\n", touchkey_reverse_enabled);
-	ret = simple_read_from_buffer(user_buf, count, ppos, page, strlen(page));
-
-	return ret;
-}
-
-static const struct file_operations tp_touchkey_enable_proc_fops = {
-	.write = tp_touchkey_enable_write,
-	.read =  tp_touchkey_enable_read,
-	.open = simple_open,
-	.owner = THIS_MODULE,
-};
-
-static const struct file_operations tp_touchkey_reverse_enable_proc_fops = {
-	.write = tp_touchkey_reverse_enable_write,
-	.read =  tp_touchkey_reverse_enable_read,
-	.open = simple_open,
-	.owner = THIS_MODULE,
-};
-
 static int init_synaptics_proc(struct synaptics_ts_data *ts)
 {
 	int ret = 0;	
@@ -3633,18 +3524,6 @@ static int init_synaptics_proc(struct synaptics_ts_data *ts)
         printk(KERN_INFO"init_synaptics_proc: Couldn't create proc entry\n");
     }
     #endif
-
-    prEntry_tmp = proc_create("touchkey_enable", 0664, prEntry_tp, &tp_touchkey_enable_proc_fops);
-	if(prEntry_tmp == NULL) {
-		ret = -ENOMEM;
-		printk(KERN_INFO"init_synaptics_proc: Couldn't create proc entry\n");
-	}
-
-	prEntry_tmp = proc_create("touchkey_reverse_enable", 0664, prEntry_tp, &tp_touchkey_reverse_enable_proc_fops);
-	if(prEntry_tmp == NULL) {
-		ret = -ENOMEM;
-		printk(KERN_INFO"init_synaptics_proc: Couldn't create proc entry\n");
-	}
     
 	return ret;
 }
